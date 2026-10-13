@@ -161,17 +161,31 @@ jobs:
             Write-Error "Standalone build missing - next.config.mjs must have output: 'standalone'."
             exit 1
           }
-          $pairs = @(
-            @((Join-Path $root '.next\static'), (Join-Path $standAlone '.next\static')),
-            @((Join-Path $root 'public'),       (Join-Path $standAlone 'public'))
-          )
-          foreach ($p in $pairs) {
-            if (Test-Path -LiteralPath $p[0]) {
-              & robocopy $p[0] $p[1] /MIR /NFL /NDL /NP /R:2 /W:5 | Out-Null
-              if ($LASTEXITCODE -ge 8) { Write-Error "robocopy $($p[0]) failed ($LASTEXITCODE)"; exit 1 }
-              Write-Host "Copied $($p[0]) -> $($p[1])"
-            }
+          # Same layout as the ERP front deploy (works in production):
+          #   .next\static + public -> .next\standalone\  and  .next\standalone\.next\
+          $static = Join-Path $root '.next\static'
+          $public = Join-Path $root 'public'
+          if (-not (Test-Path -LiteralPath (Join-Path $static 'chunks'))) {
+            Write-Error "Build output missing at $static\chunks"
+            exit 1
           }
+          $copies = @(
+            @($static, (Join-Path $standAlone 'static')),
+            @($static, (Join-Path $standAlone '.next\static')),
+            @($public, (Join-Path $standAlone 'public')),
+            @($public, (Join-Path $standAlone '.next\public'))
+          )
+          foreach ($c in $copies) {
+            $from = $c[0]; $to = $c[1]
+            if (-not (Test-Path -LiteralPath $from)) { Write-Host "skip (absent): $from"; continue }
+            & robocopy $from $to /MIR /NFL /NDL /NP /R:2 /W:5 | Out-Null
+            if ($LASTEXITCODE -ge 8) { Write-Error "robocopy $from -> $to failed ($LASTEXITCODE)"; exit 1 }
+            Write-Host "Copied $from -> $to"
+          }
+
+          $check = Join-Path $standAlone '.next\static\chunks'
+          if (-not (Test-Path -LiteralPath $check)) { Write-Error "Static chunks still missing at $check"; exit 1 }
+          Write-Host ("Static chunks served from {0}: {1} file(s)" -f $check, (Get-ChildItem $check -File).Count)
           exit 0
 
       - name: Start / restart pm2 "attendance"
