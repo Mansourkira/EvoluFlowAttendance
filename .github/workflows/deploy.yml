@@ -1,0 +1,218 @@
+name: Deploy Attendance (attendance.admission.tn)
+
+# Manual deployment of the student QR attendance app.
+#   - Domain:  attendance.admission.tn  (IIS site, reverse proxy to localhost:PORT, see web.config)
+#   - Folder:  C:\apps\attendance.admission.tn
+#   - Port:    3070  (also read from the hand-maintained .env in the folder)
+#   - Process: pm2 app "attendance"  (.next\standalone\server.js)
+#
+# Hand-maintained files on the server, kept across deploys: .env, web.config
+#   .env must contain at least:
+#     NEXT_PUBLIC_API_URL=https://<ERP API domain>/api/v1   (read at build time)
+#     PORT=3070
+#
+# Branch is chosen with the "Use workflow from" dropdown in the Actions tab;
+# actions/checkout then checks out that same ref.
+# The ERP apps (front, front-beta, admission-back) are never touched.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-attendance
+  cancel-in-progress: false
+
+env:
+  DEPLOY_DIR: 'C:\apps\attendance.admission.tn'
+  APP_NAME: 'attendance'
+  PORT: '3070'
+  PM2: 'C:\nvm4w\nodejs\pm2.cmd'
+  PRESERVE_FILES: '.env,web.config'
+
+jobs:
+  deploy:
+    name: Deploy selected branch to attendance.admission.tn
+    runs-on: [self-hosted, windows]
+
+    steps:
+      - name: Safety guard - target must be the attendance folder
+        shell: powershell
+        run: |
+          $target = "${{ env.DEPLOY_DIR }}".TrimEnd('\').ToLowerInvariant()
+          Write-Host "Deploy target: $target"
+          if ($target -ne 'c:\apps\attendance.admission.tn') {
+            Write-Error "Refusing to run: unexpected deploy target '$target'."
+            exit 1
+          }
+
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 1) Check in the runner workspace before touching the live folder.
+      - name: Install + typecheck (runner workspace)
+        shell: powershell
+        run: |
+          npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { Write-Error "Typecheck failed - nothing deployed."; exit 1 }
+
+      # 2) Sync into the live folder, keeping .env and web.config.
+      - name: Ensure folder and hand-maintained files exist
+        shell: powershell
+        run: |
+          if (-not (Test-Path -LiteralPath "${{ env.DEPLOY_DIR }}")) {
+            New-Item -ItemType Directory -Path "${{ env.DEPLOY_DIR }}" -Force | Out-Null
+          }
+          foreach ($f in "${{ env.PRESERVE_FILES }}".Split(',')) {
+            $p = Join-Path "${{ env.DEPLOY_DIR }}" $f.Trim()
+            if (-not (Test-Path -LiteralPath $p) -or (Get-Item $p).Length -eq 0) {
+              Write-Error "$f missing or empty in ${{ env.DEPLOY_DIR }} - create it on the server first (see README)."
+              exit 1
+            }
+          }
+
+      - name: Back up preserved files (.env, web.config)
+        shell: powershell
+        run: |
+          $backup = Join-Path $env:RUNNER_TEMP ("preserve-" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $backup -Force | Out-Null
+          "$backup" | Out-File -FilePath (Join-Path $env:RUNNER_TEMP 'preserve_path.txt') -Encoding ascii
+          foreach ($f in "${{ env.PRESERVE_FILES }}".Split(',')) {
+            Copy-Item -LiteralPath (Join-Path "${{ env.DEPLOY_DIR }}" $f.Trim()) -Destination (Join-Path $backup $f.Trim()) -Force
+            Write-Host "Preserved $f"
+          }
+
+      - name: Sync source into folder (keep .env, web.config, node_modules)
+        shell: powershell
+        run: |
+          $src = "$env:GITHUB_WORKSPACE\"
+          $dst = "${{ env.DEPLOY_DIR }}\"
+          $rc = @(
+            $src, $dst, '/MIR',
+            '/XF', '.env', 'web.config',
+            '/XD', "$dst.git", "$dst.next", "$dst`node_modules", "$src.git", "$src`node_modules",
+            '/NFL', '/NDL', '/NP', '/R:2', '/W:5'
+          )
+          & robocopy @rc
+          if ($LASTEXITCODE -ge 8) { Write-Error "robocopy failed ($LASTEXITCODE)"; exit 1 }
+          exit 0
+
+      - name: Restore preserved files
+        shell: powershell
+        run: |
+          $backup = (Get-Content (Join-Path $env:RUNNER_TEMP 'preserve_path.txt') -Raw).Trim()
+          foreach ($f in "${{ env.PRESERVE_FILES }}".Split(',')) {
+            Copy-Item -LiteralPath (Join-Path $backup $f.Trim()) -Destination (Join-Path "${{ env.DEPLOY_DIR }}" $f.Trim()) -Force
+            Write-Host "Restored $f"
+          }
+
+      - name: Install dependencies
+        shell: powershell
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Stop app before build (releases locks on .next)
+        shell: powershell
+        run: |
+          & "${{ env.PM2 }}" describe "${{ env.APP_NAME }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & "${{ env.PM2 }}" stop "${{ env.APP_NAME }}"
+            Write-Host "Stopped ${{ env.APP_NAME }}"
+          } else {
+            Write-Host "${{ env.APP_NAME }} not running yet - first deploy"
+          }
+          exit 0
+
+      - name: Build (reads NEXT_PUBLIC_API_URL from .env)
+        shell: powershell
+        working-directory: ${{ env.DEPLOY_DIR }}
+        timeout-minutes: 15
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          CI: 'true'
+        run: |
+          if (-not (Select-String -Path .env -Pattern '^\s*NEXT_PUBLIC_API_URL\s*=' -Quiet)) {
+            Write-Error "NEXT_PUBLIC_API_URL missing in .env - the app would call localhost."
+            exit 1
+          }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Assemble Next.js standalone output
+        shell: powershell
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # The standalone server does not bundle .next\static or public: copy them in.
+          $root       = "${{ env.DEPLOY_DIR }}"
+          $standAlone = Join-Path $root '.next\standalone'
+          if (-not (Test-Path -LiteralPath (Join-Path $standAlone 'server.js'))) {
+            Write-Error "Standalone build missing - next.config.mjs must have output: 'standalone'."
+            exit 1
+          }
+          $pairs = @(
+            @((Join-Path $root '.next\static'), (Join-Path $standAlone '.next\static')),
+            @((Join-Path $root 'public'),       (Join-Path $standAlone 'public'))
+          )
+          foreach ($p in $pairs) {
+            if (Test-Path -LiteralPath $p[0]) {
+              & robocopy $p[0] $p[1] /MIR /NFL /NDL /NP /R:2 /W:5 | Out-Null
+              if ($LASTEXITCODE -ge 8) { Write-Error "robocopy $($p[0]) failed ($LASTEXITCODE)"; exit 1 }
+              Write-Host "Copied $($p[0]) -> $($p[1])"
+            }
+          }
+          exit 0
+
+      - name: Start / restart pm2 "attendance"
+        shell: powershell
+        working-directory: ${{ env.DEPLOY_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pm2    = "${{ env.PM2 }}"
+          $server = Join-Path "${{ env.DEPLOY_DIR }}" '.next\standalone\server.js'
+
+          # server.js does not load .env: pass PORT through pm2's environment.
+          $portLine = Select-String -Path (Join-Path "${{ env.DEPLOY_DIR }}" '.env') -Pattern '^\s*PORT\s*=\s*(\d+)' | Select-Object -First 1
+          $env:PORT = if ($portLine) { $portLine.Matches[0].Groups[1].Value } else { "${{ env.PORT }}" }
+          # Listen on localhost only: the app is reachable solely through IIS (HTTPS).
+          $env:HOSTNAME = '127.0.0.1'
+          Write-Host "Using PORT=$env:PORT HOSTNAME=$env:HOSTNAME"
+
+          & $pm2 describe "${{ env.APP_NAME }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & $pm2 restart "${{ env.APP_NAME }}" --update-env
+          } else {
+            & $pm2 start $server --name "${{ env.APP_NAME }}"
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Error "pm2 start/restart failed ($LASTEXITCODE)"; exit 1 }
+          # Saved list = what the pm2 Windows service restores at boot.
+          & $pm2 save
+
+      - name: Health check
+        shell: powershell
+        run: |
+          $port = (Select-String -Path (Join-Path "${{ env.DEPLOY_DIR }}" '.env') -Pattern '^\s*PORT\s*=\s*(\d+)' | Select-Object -First 1)
+          $port = if ($port) { $port.Matches[0].Groups[1].Value } else { "${{ env.PORT }}" }
+          for ($i = 0; $i -lt 15; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { Write-Host "App answers on port $port"; exit 0 }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          Write-Error "App does not answer on http://127.0.0.1:$port/ - check: pm2 logs ${{ env.APP_NAME }}"
+          exit 1
+
+      - name: Summary
+        shell: powershell
+        run: |
+          Write-Host "Deployed branch '${{ github.ref_name }}' to ${{ env.DEPLOY_DIR }}"
+          Write-Host "Live: https://attendance.admission.tn  (pm2 '${{ env.APP_NAME }}')"
