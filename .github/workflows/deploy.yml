@@ -123,7 +123,9 @@ jobs:
       - name: Stop app before build (releases locks on .next)
         shell: powershell
         run: |
-          & "${{ env.PM2 }}" describe "${{ env.APP_NAME }}" *> $null
+          # cmd /c: on first deploy pm2 writes "doesn't exist" to stderr, which Windows PowerShell 5.1
+          # turns into a terminating error when redirected (GitHub runs steps with ErrorActionPreference=Stop).
+          cmd /c "`"${{ env.PM2 }}`" describe ${{ env.APP_NAME }} >nul 2>&1"
           if ($LASTEXITCODE -eq 0) {
             & "${{ env.PM2 }}" stop "${{ env.APP_NAME }}"
             Write-Host "Stopped ${{ env.APP_NAME }}"
@@ -187,7 +189,9 @@ jobs:
           $env:HOSTNAME = '127.0.0.1'
           Write-Host "Using PORT=$env:PORT HOSTNAME=$env:HOSTNAME"
 
-          & $pm2 describe "${{ env.APP_NAME }}" *> $null
+          # Same reason as the stop step: pm2 stderr must not abort the step.
+          $ErrorActionPreference = "Continue"
+          cmd /c "`"$pm2`" describe ${{ env.APP_NAME }} >nul 2>&1"
           if ($LASTEXITCODE -eq 0) {
             & $pm2 restart "${{ env.APP_NAME }}" --update-env
           } else {
@@ -196,6 +200,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "pm2 start/restart failed ($LASTEXITCODE)"; exit 1 }
           # Saved list = what the pm2 Windows service restores at boot.
           & $pm2 save
+          if ($LASTEXITCODE -ne 0) { Write-Error "pm2 save failed ($LASTEXITCODE)"; exit 1 }
+          exit 0
 
       - name: Health check
         shell: powershell
