@@ -168,7 +168,7 @@ export function PresenceFlow({ code }: { code: string }) {
 
       {!persisted ? (
         <Status tone="warning" title="Navigation privée détectée">
-          <p>Votre tablette ne sera pas reconnue la prochaine fois. Ouvrez ce lien dans une fenêtre normale.</p>
+          <p>Votre téléphone ne sera pas reconnu la prochaine fois. Ouvrez ce lien dans une fenêtre normale.</p>
         </Status>
       ) : null}
 
@@ -178,6 +178,9 @@ export function PresenceFlow({ code }: { code: string }) {
             <div className="big-check">✓</div>
             <strong>Présence enregistrée</strong>
             {(marked?.heure ?? data.moi.heure) ? <p>à {marked?.heure ?? data.moi.heure}</p> : null}
+            {(marked?.retardMinutes ?? data.moi.retardMinutes) ? (
+              <p>En retard de {marked?.retardMinutes ?? data.moi.retardMinutes} min</p>
+            ) : null}
             <p>{data.moi.nomPrenom}</p>
           </div>
         ) : data.moi.presence === false ? (
@@ -203,14 +206,14 @@ export function PresenceFlow({ code }: { code: string }) {
 
       {data.etat === "HORS_SEANCE" ? (
         <Status tone="warning" title="Vous n'êtes pas inscrit à cette séance">
-          <p>Cette tablette est associée à {data.moi.nomPrenom}. Adressez-vous au professeur.</p>
+          <p>Ce téléphone est associé à {data.moi.nomPrenom}. Adressez-vous au professeur.</p>
         </Status>
       ) : null}
 
       {data.etat === "EN_ATTENTE" ? (
         <Status tone="info" title="En attente de validation par le professeur">
           <p>
-            Demande envoyée pour <b>{data.demande?.nomPrenom}</b>. Le professeur va valider votre tablette depuis son écran.
+            Demande envoyée pour <b>{data.demande?.nomPrenom}</b>. Le professeur va valider votre téléphone depuis son écran.
           </p>
           <p className="center">
             <span className="spinner" aria-hidden />
@@ -223,7 +226,7 @@ export function PresenceFlow({ code }: { code: string }) {
           <div className="card stack">
             <h1>Vous êtes {chosen.nomPrenom} ?</h1>
             <p className="meta">
-              Le professeur va confirmer que c&apos;est bien vous. Cette tablette sera ensuite liée à votre nom pour tout le
+              Le professeur va confirmer que c&apos;est bien vous. Ce téléphone sera ensuite lié à votre nom pour tout le
               cours.
             </p>
             <button className="btn btn-primary" disabled={busy} onClick={confirmPairing}>
@@ -237,7 +240,7 @@ export function PresenceFlow({ code }: { code: string }) {
         ) : (
           <div className="card stack">
             <h1>Qui êtes-vous ?</h1>
-            <p className="meta">Première utilisation de cette tablette pour ce cours : choisissez votre nom.</p>
+            <p className="meta">Première utilisation de ce téléphone pour ce cours : choisissez votre nom.</p>
             {etudiants.length > 8 ? (
               <input
                 type="search"
@@ -256,7 +259,7 @@ export function PresenceFlow({ code }: { code: string }) {
                     onClick={() => setChosen({ reference: e.reference, nomPrenom: e.nomPrenom })}
                   >
                     {e.nomPrenom}
-                    {e.dejaAssocie ? <small>Tablette déjà associée</small> : null}
+                    {e.dejaAssocie ? <small>Déjà associé à un autre téléphone</small> : null}
                   </button>
                 </li>
               ))}
