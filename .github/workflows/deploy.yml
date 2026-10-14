@@ -161,8 +161,8 @@ jobs:
             Write-Error "Standalone build missing - next.config.mjs must have output: 'standalone'."
             exit 1
           }
-          # Same layout as the ERP front deploy (works in production):
-          #   .next\static + public -> .next\standalone\  and  .next\standalone\.next\
+          # The standalone server serves assets from .next\standalone\.next\static and .next\standalone\public.
+          # (No copy to .next\standalone\static: Next 15 treats it as the deprecated "static" folder.)
           $static = Join-Path $root '.next\static'
           $public = Join-Path $root 'public'
           if (-not (Test-Path -LiteralPath (Join-Path $static 'chunks'))) {
@@ -170,10 +170,8 @@ jobs:
             exit 1
           }
           $copies = @(
-            @($static, (Join-Path $standAlone 'static')),
             @($static, (Join-Path $standAlone '.next\static')),
-            @($public, (Join-Path $standAlone 'public')),
-            @($public, (Join-Path $standAlone '.next\public'))
+            @($public, (Join-Path $standAlone 'public'))
           )
           foreach ($c in $copies) {
             $from = $c[0]; $to = $c[1]
