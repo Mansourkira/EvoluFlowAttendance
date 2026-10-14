@@ -8,7 +8,7 @@ export function getPosition(): Promise<PositionResult> {
     return Promise.resolve({ ok: false, message: "La localisation exige une connexion sécurisée (https)." });
   }
   if (!("geolocation" in navigator)) {
-    return Promise.resolve({ ok: false, message: "Cette tablette ne permet pas la localisation." });
+    return Promise.resolve({ ok: false, message: "Ce téléphone ne permet pas la localisation." });
   }
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
@@ -27,7 +27,7 @@ export function getPosition(): Promise<PositionResult> {
               ? "Localisation refusée. Autorisez la position pour ce site dans le navigateur, puis réessayez."
               : err.code === err.TIMEOUT
                 ? "La position met trop de temps à arriver. Réessayez."
-                : "Position introuvable. Activez la localisation (GPS) de la tablette et réessayez.",
+                : "Position introuvable. Activez la localisation (GPS) du téléphone et réessayez.",
         }),
       { enableHighAccuracy: true, timeout: 20_000, maximumAge: 0 }
     );

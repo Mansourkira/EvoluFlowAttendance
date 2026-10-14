@@ -19,7 +19,7 @@ export type ResolveResponse =
       ticket: string | null;
       seance: SeanceCard;
       etat: "ASSOCIE" | "HORS_SEANCE";
-      moi: { nomPrenom: string; presence: boolean | null; heure: string | null };
+      moi: { nomPrenom: string; presence: boolean | null; heure: string | null; retardMinutes: number | null };
     }
   | {
       ticket: string | null;
@@ -29,7 +29,7 @@ export type ResolveResponse =
       etudiants: Array<{ reference: string; nomPrenom: string; dejaAssocie: boolean }>;
     };
 
-export type MarkResponse = { etat: "PRESENT" | "DEJA_PRESENT"; heure: string | null };
+export type MarkResponse = { etat: "PRESENT" | "DEJA_PRESENT"; heure: string | null; retardMinutes: number | null };
 
 /** Erreur API avec le code métier renvoyé par le serveur (QR_EXPIRED, OUT_OF_RANGE…). */
 export class ApiError extends Error {
@@ -51,7 +51,7 @@ async function post<T>(path: string, body: Record<string, unknown>): Promise<T> 
       cache: "no-store",
     });
   } catch {
-    throw new ApiError("Connexion impossible. Vérifiez le Wi-Fi de la tablette.", "NETWORK", 0);
+    throw new ApiError("Connexion impossible. Vérifiez la connexion internet de votre téléphone.", "NETWORK", 0);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
